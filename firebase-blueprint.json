@@ -1,0 +1,44 @@
+{
+  "entities": {
+    "jobProfile": {
+      "title": "Job Profile",
+      "description": "Defines the requirements for a job role.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Name of the profile (e.g., Senior Frontend Developer)" },
+        "experience": { "type": "string", "description": "Required years of experience" },
+        "field": { "type": "string", "description": "The industry or field (e.g., Software Engineering)" },
+        "skills": { "type": "string", "description": "Key skills required" },
+        "otherRequirements": { "type": "string", "description": "Any other specific requirements" },
+        "uid": { "type": "string", "description": "The user ID who created the profile" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the profile was created" }
+      },
+      "required": ["name", "uid", "createdAt"]
+    },
+    "screeningResult": {
+      "title": "Screening Result",
+      "description": "The result of a CV screening against a job profile.",
+      "type": "object",
+      "properties": {
+        "candidateName": { "type": "string", "description": "Name of the candidate extracted from CV" },
+        "score": { "type": "number", "description": "Match score from 0 to 100" },
+        "keyFeatures": { "type": "array", "items": { "type": "string" }, "description": "Top strengths of the candidate" },
+        "summary": { "type": "string", "description": "A quick summary of the candidate's profile" },
+        "jobProfileId": { "type": "string", "description": "ID of the job profile used for screening" },
+        "uid": { "type": "string", "description": "The user ID who performed the screening" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the screening was performed" }
+      },
+      "required": ["candidateName", "score", "uid", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/jobProfiles/{profileId}": {
+      "schema": "jobProfile",
+      "description": "User-defined job requirement profiles."
+    },
+    "/screenings/{screeningId}": {
+      "schema": "screeningResult",
+      "description": "Results of CV screenings."
+    }
+  }
+}

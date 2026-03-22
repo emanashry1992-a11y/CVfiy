@@ -1,0 +1,74 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: jobProfiles
+    // Document ID: auto-generated
+    // Fields:
+    //   - name: string (required)
+    //   - experience: string
+    //   - field: string
+    //   - skills: string
+    //   - otherRequirements: string
+    //   - uid: string (required, owner)
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: screenings
+    // Document ID: auto-generated
+    // Fields:
+    //   - candidateName: string (required)
+    //   - score: number (required)
+    //   - keyFeatures: list (strings)
+    //   - summary: string
+    //   - jobProfileId: string
+    //   - uid: string (required, owner)
+    //   - createdAt: timestamp (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+
+    function isValidJobProfile(data) {
+      return data.keys().hasAll(['name', 'uid', 'createdAt']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.uid == request.auth.uid;
+    }
+
+    function isValidScreening(data) {
+      return data.keys().hasAll(['candidateName', 'score', 'uid', 'createdAt']) &&
+             data.candidateName is string && data.candidateName.size() > 0 &&
+             data.score is number && data.score >= 0 && data.score <= 100 &&
+             data.uid == request.auth.uid;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /jobProfiles/{profileId} {
+      allow read: if isOwner(resource.data.uid);
+      allow create: if isAuthenticated() && isValidJobProfile(request.resource.data);
+      allow update: if isOwner(resource.data.uid) && isValidJobProfile(request.resource.data);
+      allow delete: if isOwner(resource.data.uid);
+    }
+
+    match /screenings/{screeningId} {
+      allow read: if isOwner(resource.data.uid);
+      allow create: if isAuthenticated() && isValidScreening(request.resource.data);
+      allow update: if isOwner(resource.data.uid) && isValidScreening(request.resource.data);
+      allow delete: if isOwner(resource.data.uid);
+    }
+  }
+}
