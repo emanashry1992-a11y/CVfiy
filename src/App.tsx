@@ -39,6 +39,8 @@ import {
   OperationType, 
   handleFirestoreError 
 } from './firebase';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import LoginPage from './LoginPage';
 import { 
   onAuthStateChanged, 
   User as FirebaseUser 
@@ -58,7 +60,6 @@ import {
 import { screenCV, generateCVReport, type JobRequirements, type ScreeningResult } from './services/gemini';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import html2pdf from 'html2pdf.js';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -78,7 +79,7 @@ interface SavedScreening extends ScreeningResult {
   createdAt: any;
 }
 
-export default function App() {
+function Dashboard() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [jobProfiles, setJobProfiles] = useState<SavedJobProfile[]>([]);
@@ -176,7 +177,6 @@ export default function App() {
   };
 
   const handleScreening = async () => {
-    if (!user) return;
     if (!activeProfileId) {
       setError("Please save the job profile first before screening CVs.");
       return;
@@ -210,13 +210,24 @@ export default function App() {
         const base64 = await fileToBase64(file);
         const result = await screenCV(base64, file.type, currentRequirements);
         
-        await addDoc(collection(db, 'screenings'), {
-          ...result,
-          fileName: file.name,
-          jobProfileId: activeProfileId,
-          uid: user.uid,
-          createdAt: serverTimestamp()
-        });
+        if (user) {
+          await addDoc(collection(db, 'screenings'), {
+            ...result,
+            fileName: file.name,
+            jobProfileId: activeProfileId,
+            uid: user.uid,
+            createdAt: serverTimestamp()
+          });
+        } else {
+          setScreenings(prev => [{
+            id: Date.now().toString() + Math.random().toString(),
+            ...result,
+            fileName: file.name,
+            jobProfileId: activeProfileId,
+            uid: 'local',
+            createdAt: new Date()
+          } as SavedScreening, ...prev]);
+        }
       }
       setActiveTab('results');
       setSelectedFiles([]);
@@ -229,8 +240,19 @@ export default function App() {
   };
 
   const saveProfile = async () => {
-    if (!user || !currentRequirements.name) {
+    if (!currentRequirements.name) {
       setError("Please provide a name for the job profile.");
+      return;
+    }
+    if (!user) {
+      if (activeProfileId) {
+        setJobProfiles(prev => prev.map(p => p.id === activeProfileId ? { ...p, ...currentRequirements } as SavedJobProfile : p));
+      } else {
+        const newId = Date.now().toString();
+        setJobProfiles(prev => [{ id: newId, ...currentRequirements, uid: 'local', createdAt: new Date() } as SavedJobProfile, ...prev]);
+        setActiveProfileId(newId);
+      }
+      setError(null);
       return;
     }
     try {
@@ -266,6 +288,11 @@ export default function App() {
 
   const deleteProfile = async (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
+    if (!user) {
+      setJobProfiles(prev => prev.filter(p => p.id !== id));
+      if (activeProfileId === id) setActiveProfileId(null);
+      return;
+    }
     try {
       await deleteDoc(doc(db, 'jobProfiles', id));
       if (activeProfileId === id) {
@@ -286,6 +313,14 @@ export default function App() {
 
   const deleteSelectedProfiles = async () => {
     if (selectedProfileIds.size === 0) return;
+    if (!user) {
+      setJobProfiles(prev => prev.filter(p => !selectedProfileIds.has(p.id)));
+      if (activeProfileId && selectedProfileIds.has(activeProfileId)) {
+        setActiveProfileId(null);
+      }
+      setSelectedProfileIds(new Set());
+      return;
+    }
     try {
       for (const id of selectedProfileIds) {
         await deleteDoc(doc(db, 'jobProfiles', id));
@@ -301,6 +336,11 @@ export default function App() {
 
   const deleteScreening = async (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
+    if (!user) {
+      setScreenings(prev => prev.filter(s => s.id !== id));
+      if (selectedScreening?.id === id) setSelectedScreening(null);
+      return;
+    }
     try {
       await deleteDoc(doc(db, 'screenings', id));
       if (selectedScreening?.id === id) {
@@ -313,6 +353,10 @@ export default function App() {
 
   const clearAllCurrentScreenings = async (profileId: string) => {
     if (!profileId) return;
+    if (!user) {
+      setScreenings(prev => prev.filter(s => s.jobProfileId !== profileId));
+      return;
+    }
     const toDelete = screenings.filter(s => s.jobProfileId === profileId);
     try {
       for (const s of toDelete) {
@@ -333,6 +377,11 @@ export default function App() {
 
   const deleteSelectedScreenings = async () => {
     if (selectedResultIds.size === 0) return;
+    if (!user) {
+      setScreenings(prev => prev.filter(s => !selectedResultIds.has(s.id)));
+      setSelectedResultIds(new Set());
+      return;
+    }
     try {
       for (const id of selectedResultIds) {
         await deleteDoc(doc(db, 'screenings', id));
@@ -361,19 +410,12 @@ export default function App() {
     }
   };
 
+  const reportRef = useRef<HTMLDivElement>(null);
+  
   const handleSavePDF = () => {
-    const element = document.getElementById('report-content');
-    if (!element || !selectedScreening) return;
-    
-    const opt = {
-      margin:       10,
-      filename:     `${selectedScreening.candidateName.replace(/\s+/g, '_')}_Report.pdf`,
-      image:        { type: 'jpeg', quality: 0.98 },
-      html2canvas:  { scale: 2, useCORS: true },
-      jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
-    };
-    
-    html2pdf().set(opt).from(element).save();
+    // The print styles are already defined in index.css
+    // which will hide everything except the report content
+    window.print();
   };
 
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -400,6 +442,8 @@ export default function App() {
     }
   };
 
+  const navigate = useNavigate();
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[#FFFFFF] flex items-center justify-center">
@@ -408,67 +452,38 @@ export default function App() {
     );
   }
 
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-[#FFFFFF] flex flex-col items-center justify-center p-4 relative overflow-hidden font-sans">
-        {/* Decorative background elements */}
-        <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-[#273F5B] opacity-10 rounded-full blur-[100px]"></div>
-        <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-[#6F481C] opacity-10 rounded-full blur-[100px]"></div>
-        
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="max-w-md w-full bg-[#FFFFFF] rounded-[32px] shadow-[0_8px_30px_rgb(0,0,0,0.04)] p-10 text-center border border-[#D2BCA1] relative z-10"
-        >
-          <div className="w-20 h-20 bg-[#E9ECF0] rounded-full flex items-center justify-center mx-auto mb-8">
-            <Briefcase className="w-8 h-8 text-[#273F5B]" />
-          </div>
-          <h1 className="text-4xl font-serif font-semibold text-[#273F5B] mb-4">CVfiy</h1>
-          <p className="text-[#7F715F] mb-10 leading-relaxed font-light">
-            Analyze CVs instantly with AI. Define requirements once, screen multiple candidates in seconds.
-          </p>
-          <button
-            onClick={handleLogin}
-            disabled={isLoggingIn}
-            className="w-full flex items-center justify-center gap-3 bg-[#6F481C] text-white py-4 rounded-full font-medium hover:bg-[#6F481C] transition-all shadow-md shadow-[#6F481C]/20 disabled:opacity-70"
-          >
-            {isLoggingIn ? (
-              <Loader2 className="w-5 h-5 animate-spin" />
-            ) : (
-              <User className="w-5 h-5" />
-            )}
-            {isLoggingIn ? "Connecting..." : "Continue with Google"}
-          </button>
-          {error && (
-            <div className="mt-6 flex items-center gap-3 text-[#A76825] text-sm bg-[#F6EFE9] p-4 rounded-2xl border border-[#E6D2C0]">
-              <AlertCircle className="w-5 h-5 shrink-0" />
-              <span className="text-left">{error}</span>
-            </div>
-          )}
-        </motion.div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-[#FFFFFF] text-[#273F5B] font-sans pb-24">
       {/* Header */}
-      <header className="bg-[#FFFFFF]/80 backdrop-blur-xl border-b border-[#D2BCA1] sticky top-0 z-30">
+      <header className="bg-[#1C2D42] text-white sticky top-0 z-30 shadow-md">
         <div className="max-w-6xl mx-auto px-6 h-20 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-[#273F5B] rounded-full flex items-center justify-center shadow-sm shadow-[#273F5B]/20">
+            <div className="w-10 h-10 bg-white/10 rounded-full flex items-center justify-center border border-white/20">
               <Briefcase className="w-5 h-5 text-white" />
             </div>
-            <span className="font-serif font-semibold text-2xl tracking-tight text-[#273F5B]">CVfiy</span>
+            <span className="font-serif font-semibold text-2xl tracking-tight text-white">CVfiy</span>
           </div>
           <div className="flex items-center gap-4">
-            <div className="hidden sm:flex items-center gap-3 text-sm font-medium text-[#7F715F] bg-[#FFFFFF] py-1.5 px-4 rounded-full border border-[#D2BCA1] shadow-sm">
-              <img src={user.photoURL || ''} alt="" className="w-6 h-6 rounded-full" />
-              <span>{user.displayName}</span>
-            </div>
-            <button onClick={logout} className="w-10 h-10 flex items-center justify-center bg-[#FFFFFF] border border-[#D2BCA1] hover:bg-[#F4EBE1] rounded-full text-[#7F715F] transition-colors shadow-sm">
-              <LogOut className="w-4 h-4" />
-            </button>
+            {user ? (
+              <>
+                <div className="hidden sm:flex items-center gap-3 text-sm font-medium text-white/90 bg-white/10 py-1.5 px-4 rounded-full border border-white/20 shadow-sm">
+                  <img src={user.photoURL || ''} alt="" className="w-6 h-6 rounded-full" />
+                  <span>{user.displayName}</span>
+                </div>
+                <button onClick={logout} className="w-10 h-10 flex items-center justify-center bg-white/10 border border-white/20 hover:bg-white/20 rounded-full text-white transition-colors shadow-sm">
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button onClick={() => navigate('/login')} className="px-4 py-2 text-sm font-medium text-white/80 hover:text-white transition-colors">
+                  Log in
+                </button>
+                <button onClick={() => navigate('/login')} className="px-4 py-2 text-sm font-medium bg-white/10 text-white border border-white/20 rounded-full hover:bg-white/20 transition-colors shadow-sm">
+                  Sign up
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -509,9 +524,9 @@ export default function App() {
             >
               <div className="relative w-full h-[400px] rounded-[32px] overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.06)] group">
                 <img 
-                  src="https://images.unsplash.com/photo-1584273143981-41c073dfe8f8?auto=format&fit=crop&w=1200&q=80" 
-                  alt="Plain formal suit and tie" 
-                  className="w-full h-full object-cover object-[center_35%] transition-transform duration-700 group-hover:scale-105"
+                  src="https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&w=1200&q=80" 
+                  alt="Man in a navy blue formal suit" 
+                  className="w-full h-full object-cover object-[center_20%] transition-transform duration-700 group-hover:scale-105"
                   referrerPolicy="no-referrer"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-[#1C2D42] via-[#1C2D42]/70 to-[#1C2D42]/30 flex flex-col justify-end p-8 sm:p-14">
@@ -1028,7 +1043,6 @@ export default function App() {
                     <div className="flex flex-col space-y-3">
                       {currentScreenings.map((res, index) => (
                         <motion.div 
-                          layout
                           key={res.id}
                           onClick={() => setSelectedScreening(res)}
                           className={cn(
@@ -1246,7 +1260,7 @@ export default function App() {
                     </div>
                   ) : reportText ? (
                     <div className="max-w-4xl mx-auto bg-[#FFFFFF] p-10 md:p-16 shadow-lg border border-[#D2BCA1] min-h-[800px]">
-                      <div id="report-content" className="prose prose-stone prose-headings:font-serif prose-headings:text-[#273F5B] prose-a:text-[#6F481C] prose-hr:border-[#D2BCA1] prose-li:marker:text-[#7F715F] max-w-none">
+                      <div ref={reportRef} id="report-content" className="prose prose-stone prose-headings:font-serif prose-headings:text-[#273F5B] prose-a:text-[#6F481C] prose-hr:border-[#D2BCA1] prose-li:marker:text-[#7F715F] max-w-none">
                         <Markdown remarkPlugins={[remarkGfm]}>{reportText}</Markdown>
                       </div>
                     </div>
@@ -1296,5 +1310,17 @@ export default function App() {
         ))}
       </div>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
